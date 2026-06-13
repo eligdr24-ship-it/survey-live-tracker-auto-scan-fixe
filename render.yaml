@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: survey-live-tracker
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: DATA_DIR
+        value: /var/data
+      - key: CHECK_INTERVAL_MINUTES
+        value: 60
+    disk:
+      name: survey-live-tracker-data
+      mountPath: /var/data
+      sizeGB: 1

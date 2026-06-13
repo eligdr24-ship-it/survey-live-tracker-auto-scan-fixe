@@ -1,0 +1,19 @@
+{
+  "name": "survey-live-tracker-render-ready",
+  "version": "7.0.0",
+  "description": "GitHub and Render ready survey live tracker with Google Maps browser checking using bundled Chromium.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": "20.x",
+    "npm": "10.x"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "puppeteer-core": "^22.15.0",
+    "@sparticuz/chromium": "^126.0.0"
+  }
+}

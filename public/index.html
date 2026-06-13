@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Survey Live Tracker</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Survey Payment Control</p>
+        <h1>Survey Live Tracker</h1>
+        <p class="sub">Track what is still live, what was deleted, imported survey links, and what is ready to pay after the hold period.</p>
+      </div>
+      <div class="settings-card">
+        <label>Hold days before payment</label>
+        <input id="holdDays" type="number" min="1" value="7" />
+        <label>Base pay per approved survey</label>
+        <input id="payRate" type="number" min="0" step="0.01" value="1.00" />
+      </div>
+    </header>
+
+    <section class="stats-grid">
+      <div class="stat"><span id="totalCount">0</span><p>Total submissions</p></div>
+      <div class="stat pending"><span id="pendingCount">0</span><p>Pending</p></div>
+      <div class="stat live"><span id="liveCount">0</span><p>Live / Approved</p></div>
+      <div class="stat deleted"><span id="deletedCount">0</span><p>Deleted</p></div>
+      <div class="stat payable"><span id="payableAmount">$0</span><p>Payable</p></div>
+      <div class="stat links"><span id="linkCount">0</span><p>Uploaded links</p></div>
+      <div class="stat live"><span id="linkLiveCount">0</span><p>Links live</p></div>
+      <div class="stat deleted"><span id="linkBrokenCount">0</span><p>Links broken</p></div>
+    </section>
+
+    <section class="panel">
+      <h2>Upload Excel / CSV Sheet With Survey Links</h2>
+      <p class="hint">Recommended columns: <strong>Survey Link</strong>, <strong>Worker</strong>, <strong>Participant</strong>, <strong>Submitted Date</strong>, <strong>Notes</strong>. CSV works offline. XLSX/XLS needs internet for the built-in SheetJS reader.</p>
+      <div class="upload-row">
+        <input id="linkFile" type="file" accept=".xlsx,.xls,.csv" />
+        <button id="uploadLinksBtn">Upload Links</button>
+        <button id="downloadTemplateBtn" class="secondary">Download Template CSV</button>
+        <button id="autoCheckBtn" class="good">Auto Check All</button>
+        <button id="checkSelectedBtn" class="secondary">Check Selected</button>
+        <button id="selectAllLinksBtn" class="secondary">Select Visible</button>
+        <button id="clearLinksBtn" class="danger">Clear Links</button>
+      </div>
+      <small id="uploadStatus"></small>
+      <p class="hint"><strong>Important:</strong> Auto Check now starts a backstage scan job. The page will update every few seconds while the server scans all links.</p>
+    </section>
+
+    <section class="panel controls">
+      <div>
+        <h2>Uploaded Survey Link List</h2>
+        <p>Use this list as your master sheet of survey links. You can add any link into the live follow-up tracker.</p>
+      </div>
+      <div class="control-row">
+        <input id="linkSearchBox" placeholder="Search uploaded links..." />
+        <button id="exportLinksBtn">Export Links CSV</button>
+      </div>
+    </section>
+
+    <section class="table-wrap compact">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Survey Link</th>
+            <th>Worker</th>
+            <th>Participant</th>
+            <th>Submitted Date</th>
+            <th>Notes</th>
+            <th>Check Status</th>
+            <th>Last Checked</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="linkRows"></tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>Add Survey Submission Manually</h2>
+      <div class="form-grid">
+        <input id="worker" placeholder="Worker / Affiliate name" />
+        <input id="participant" placeholder="Participant ID / phone / email" />
+        <input id="surveyLink" placeholder="Survey link or record ID" />
+        <input id="submittedAt" type="date" />
+        <button id="addBtn">Add Submission</button>
+      </div>
+    </section>
+
+    <section class="panel controls">
+      <div>
+        <h2>Follow-Up Dashboard</h2>
+        <p>Use filters to check which surveys need review before payment.</p>
+      </div>
+      <div class="control-row">
+        <select id="statusFilter">
+          <option value="all">All statuses</option>
+          <option value="Pending">Pending</option>
+          <option value="Approved">Live / Approved</option>
+          <option value="Deleted">Deleted</option>
+        </select>
+        <input id="searchBox" placeholder="Search worker, participant, link..." />
+        <button id="exportBtn">Export CSV</button>
+        <button id="clearBtn" class="danger">Clear All</button>
+      </div>
+    </section>
+
+    <section class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Worker</th>
+            <th>Participant</th>
+            <th>Survey Link / ID</th>
+            <th>Submitted</th>
+            <th>Age</th>
+            <th>Status</th>
+            <th>Payment</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
