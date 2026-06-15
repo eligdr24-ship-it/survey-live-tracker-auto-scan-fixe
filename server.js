@@ -17,7 +17,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'database.json');
-const CHECK_INTERVAL_MINUTES = Number(process.env.CHECK_INTERVAL_MINUTES || 60);
+// Link scans are manual only. The server will not auto-scan until the admin clicks Check All or Check Selected.
 
 const scanState = {
   running: false,
@@ -363,7 +363,7 @@ app.post('/api/links/:id/check', (req, res) => {
 });
 
 
-async function runScanJob({ ids = null, dueOnly = false, reason = 'manual' } = {}) {
+async function runScanJob({ ids = null, reason = 'manual' } = {}) {
   if (scanState.running) return false;
   scanState.running = true;
   scanState.startedAt = new Date().toISOString();
@@ -378,14 +378,6 @@ async function runScanJob({ ids = null, dueOnly = false, reason = 'manual' } = {
     if (Array.isArray(ids) && ids.length) {
       const idSet = new Set(ids);
       links = links.filter(l => idSet.has(l.id));
-    }
-    if (dueOnly) {
-      const dueMs = CHECK_INTERVAL_MINUTES * 60 * 1000;
-      const now = Date.now();
-      links = links.filter(link => {
-        const last = link.lastCheckedAt ? new Date(link.lastCheckedAt).getTime() : 0;
-        return now - last >= dueMs;
-      });
     }
 
     scanState.total = links.length;
@@ -463,13 +455,8 @@ app.post('/api/links/check-selected', (req, res) => {
   res.json({ started, message: started ? `Backstage scan started for ${ids.length} selected links.` : 'A scan is already running.', ...publicDB() });
 });
 
-async function automaticBackgroundCheck() {
-  // Runs in the background, never inside the browser request timeout.
-  startScanJob({ dueOnly: true, reason: 'scheduled-auto-check' });
-}
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 ensureDataFile();
-setInterval(() => automaticBackgroundCheck().catch(console.error), Math.max(CHECK_INTERVAL_MINUTES, 5) * 60 * 1000);
 app.listen(PORT, () => console.log(`Survey Live Tracker running on port ${PORT}`));

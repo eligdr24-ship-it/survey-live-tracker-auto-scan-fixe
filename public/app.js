@@ -31,7 +31,7 @@ function applyDB(db) {
 }
 async function loadData() {
   try { applyDB(await api('/api/data')); }
-  catch (err) { alert('Could not load server data. Make sure the Render/Node server is running.'); }
+  catch (err) { console.error('Load data failed:', err); if ($('uploadStatus')) $('uploadStatus').textContent = 'Could not load server data. Check Render service logs and /api/health. Make sure this is deployed as a Web Service, not Static Site.'; }
 }
 async function saveSettings() {
   try {
@@ -63,6 +63,7 @@ function updateScanStatus() {
   if (scanState && scanState.running) {
     $('uploadStatus').textContent = `${scanState.message || 'Scanning links backstage...'} Keep this page open or come back later; the server keeps working.`;
     if ($('autoCheckBtn')) $('autoCheckBtn').disabled = true;
+    if ($('checkSelectedBtn')) $('checkSelectedBtn').disabled = true;
   } else if (scanState && scanState.finishedAt && scanState.message) {
     const live = surveyLinks.filter(l => l.checkStatus === 'Live').length;
     const notLive = surveyLinks.filter(l => l.checkStatus === 'Not Live').length;
@@ -70,8 +71,10 @@ function updateScanStatus() {
     const unknown = surveyLinks.filter(l => ['Unknown', 'Queued', 'Checking'].includes(l.checkStatus)).length;
     $('uploadStatus').textContent = `${scanState.message} Live: ${live}. Not Live: ${notLive}. Broken: ${broken}. Unknown/queued/checking: ${unknown}.`;
     if ($('autoCheckBtn')) $('autoCheckBtn').disabled = false;
+    if ($('checkSelectedBtn')) $('checkSelectedBtn').disabled = false;
   } else {
     if ($('autoCheckBtn')) $('autoCheckBtn').disabled = false;
+    if ($('checkSelectedBtn')) $('checkSelectedBtn').disabled = false;
   }
 }
 function manageScanPolling() {
@@ -298,23 +301,33 @@ window.checkOneLink = async id => {
 };
 async function autoCheckLinks() {
   if (!surveyLinks.filter(l => isLikelyUrl(l.surveyLink)).length) return alert('No valid http/https links to check.');
-  $('uploadStatus').textContent = `Starting backstage auto scan for all links...`;
+  $('uploadStatus').textContent = `Starting manual scan for all links...`;
   $('autoCheckBtn').disabled = true;
   try {
     applyDB(await api('/api/links/check-all', { method: 'POST' }));
   } catch (err) {
-    $('uploadStatus').textContent = 'Could not start auto check. Try again or check Render logs.';
+    $('uploadStatus').textContent = 'Could not start check all. Try again or check Render logs.';
     $('autoCheckBtn').disabled = false;
   }
 }
 async function checkSelectedLinks() {
   const ids = Array.from(document.querySelectorAll('.link-select:checked')).map(x => x.value);
   if (!ids.length) return alert('Select at least one link first.');
-  $('uploadStatus').textContent = `Starting backstage scan for ${ids.length} selected links...`;
+  const selected = new Set(ids);
+  surveyLinks.forEach(l => {
+    if (selected.has(l.id)) {
+      l.checkStatus = 'Queued';
+      l.checkMessage = 'Added to manual selected check queue...';
+    }
+  });
+  render();
+  $('uploadStatus').textContent = `Starting manual scan for ${ids.length} selected links...`;
+  if ($('checkSelectedBtn')) $('checkSelectedBtn').disabled = true;
   try {
     applyDB(await api('/api/links/check-selected', { method: 'POST', body: JSON.stringify({ ids }) }));
   } catch (err) {
     $('uploadStatus').textContent = 'Could not start selected check. Try again or check Render logs.';
+    if ($('checkSelectedBtn')) $('checkSelectedBtn').disabled = false;
   }
 }
 function selectAllVisibleLinks() {
