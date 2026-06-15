@@ -1,7 +1,7 @@
 {
   "name": "survey-live-tracker-render-ready",
-  "version": "7.0.0",
-  "description": "GitHub and Render ready survey live tracker with Google Maps browser checking using bundled Chromium.",
+  "version": "8.0.0",
+  "description": "Faster manual/selected scan survey tracker with shared Chromium browser and parallel link checking.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

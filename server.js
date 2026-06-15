@@ -56,7 +56,7 @@ function todayISO() { return new Date().toISOString().slice(0, 10); }
 function cleanUrl(url) { return String(url || '').trim(); }
 function isLikelyUrl(url) { return /^https?:\/\//i.test(String(url || '').trim()); }
 
-function requestUrl(url, method = 'HEAD', timeoutMs = 15000, readBody = false) {
+function requestUrl(url, method = 'HEAD', timeoutMs = 8000, readBody = false) {
   return new Promise((resolve) => {
     let parsed;
     try { parsed = new URL(url); } catch { return resolve({ status: 'Unknown', message: 'Invalid URL' }); }
@@ -124,19 +124,24 @@ function classify(result) {
 }
 
 
-async function browserCheckUrl(url, timeoutMs = 60000) {
-  if (!puppeteer || !chromium) {
-    return { status: 'Unknown', method: 'Browser', message: 'Browser checker not available. puppeteer-core/@sparticuz/chromium is not installed.' };
-  }
+let sharedBrowser = null;
+let sharedBrowserLaunching = null;
 
-  let browser;
-  try {
-    const executablePath = await chromium.executablePath();
-    if (!executablePath) {
-      return { status: 'Unknown', method: 'Browser', message: 'Chromium executable path not found on Render.' };
+async function getSharedBrowser() {
+  if (!puppeteer || !chromium) return null;
+  if (sharedBrowser) {
+    try {
+      const pages = await sharedBrowser.pages();
+      if (pages) return sharedBrowser;
+    } catch {
+      sharedBrowser = null;
     }
-
-    browser = await puppeteer.launch({
+  }
+  if (sharedBrowserLaunching) return sharedBrowserLaunching;
+  sharedBrowserLaunching = (async () => {
+    const executablePath = await chromium.executablePath();
+    if (!executablePath) throw new Error('Chromium executable path not found on Render.');
+    const browser = await puppeteer.launch({
       args: [
         ...chromium.args,
         '--no-sandbox',
@@ -144,51 +149,118 @@ async function browserCheckUrl(url, timeoutMs = 60000) {
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--no-first-run',
-        '--no-zygote'
+        '--no-zygote',
+        '--disable-background-networking',
+        '--disable-default-apps',
+        '--disable-extensions',
+        '--disable-sync',
+        '--metrics-recording-only',
+        '--mute-audio'
       ],
-      defaultViewport: { width: 1365, height: 900 },
+      defaultViewport: { width: 1280, height: 800 },
       executablePath,
       headless: chromium.headless,
       ignoreHTTPSErrors: true
     });
+    browser.on('disconnected', () => { sharedBrowser = null; });
+    sharedBrowser = browser;
+    return browser;
+  })();
+  try {
+    return await sharedBrowserLaunching;
+  } finally {
+    sharedBrowserLaunching = null;
+  }
+}
 
-    const page = await browser.newPage();
+function containsNotLivePhrase(text = '') {
+  const bodyText = String(text || '').toLowerCase().replace(/\s+/g, ' ');
+  const notLivePhrases = [
+    'this review is no longer available',
+    'review is no longer available',
+    'review no longer available',
+    'no longer available.',
+    'no longer available',
+    'survey is no longer available',
+    'this survey is no longer available',
+    'form is no longer available',
+    'this form is no longer available',
+    'survey closed',
+    'this survey has closed',
+    'survey unavailable',
+    'link expired',
+    'this study has ended',
+    'this form is no longer accepting responses',
+    'content unavailable',
+    'review not found',
+    'page not found'
+  ];
+  return notLivePhrases.find(p => bodyText.includes(p)) || '';
+}
+
+async function browserCheckUrl(url, timeoutMs = 22000) {
+  if (!puppeteer || !chromium) {
+    return { status: 'Unknown', method: 'Browser', message: 'Browser checker not available. puppeteer-core/@sparticuz/chromium is not installed.' };
+  }
+
+  let page;
+  try {
+    const browser = await getSharedBrowser();
+    if (!browser) return { status: 'Unknown', method: 'Browser', message: 'Browser checker not available.' };
+
+    page = await browser.newPage();
+    page.setDefaultNavigationTimeout(timeoutMs);
+    page.setDefaultTimeout(8000);
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36');
     await page.setExtraHTTPHeaders({ 'accept-language': 'en-US,en;q=0.9' });
+
+    // Speed boost: keep JavaScript, but skip heavy files that do not help detect the text.
+    await page.setRequestInterception(true);
+    page.on('request', req => {
+      const type = req.resourceType();
+      if (['image', 'media', 'font'].includes(type)) return req.abort();
+      return req.continue();
+    });
 
     let response = null;
     try {
       response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
     } catch (gotoErr) {
-      try { await page.waitForSelector('body', { timeout: 10000 }); } catch {}
+      // Google pages sometimes keep loading forever. Continue and inspect whatever rendered.
     }
 
-    // Google Maps often changes the visible message a few seconds after redirect/render.
-    await new Promise(resolve => setTimeout(resolve, 8000));
+    // Fast polling: stop early as soon as the target phrase appears.
+    let visibleText = '';
+    let htmlText = '';
+    let matched = '';
+    const deadline = Date.now() + 6500;
+    while (Date.now() < deadline) {
+      visibleText = await page.evaluate(() => document.body ? document.body.innerText : '').catch(() => '');
+      htmlText = await page.content().catch(() => '');
+      matched = containsNotLivePhrase(`${visibleText}\n${htmlText}\n${page.url()}`);
+      if (matched) break;
+      await new Promise(resolve => setTimeout(resolve, 750));
+    }
 
-    const visibleText = await page.evaluate(() => document.body ? document.body.innerText : '').catch(() => '');
-    const htmlText = await page.content().catch(() => '');
     const finalUrl = page.url();
     const httpStatus = response ? response.status() : '';
-    const combined = `${visibleText}\n${htmlText}\n${finalUrl}`;
-    const classified = classify({ httpStatus, finalUrl, body: combined });
-
-    if (classified.status === 'Not Live') {
-      return { ...classified, finalUrl, method: 'Browser + phrase match', message: `Matched phrase by browser: ${classified.message}` };
+    if (matched) {
+      return { status: 'Not Live', httpStatus: httpStatus || '', finalUrl, method: 'Browser + phrase match', message: `Matched phrase: ${matched}` };
     }
 
     if (/maps\.app\.goo\.gl|google\.com\/maps|goo\.gl/i.test(url) || /google\.com\/maps/i.test(finalUrl)) {
       if (!visibleText && !htmlText) return { status: 'Unknown', httpStatus, finalUrl, method: 'Browser', message: 'Browser opened page but could not read text' };
       if (httpStatus && httpStatus >= 400) return { status: 'Broken', httpStatus, finalUrl, method: 'Browser', message: `Browser check HTTP ${httpStatus}` };
-      return { status: 'Live', httpStatus: httpStatus || 200, finalUrl, method: 'Browser', message: `Browser check completed. Final URL checked.` };
+      return { status: 'Live', httpStatus: httpStatus || 200, finalUrl, method: 'Browser', message: 'Browser check completed. No not-live phrase found.' };
     }
 
+    const classified = classify({ httpStatus, finalUrl, body: `${visibleText}\n${htmlText}` });
     return { ...classified, finalUrl, method: 'Browser', message: classified.message || 'Browser check completed' };
   } catch (err) {
     return { status: 'Unknown', method: 'Browser', message: `Browser check failed: ${err.message}` };
   } finally {
-    if (browser) {
-      try { await browser.close(); } catch {}
+    if (page) {
+      try { await page.close(); } catch {}
     }
   }
 }
@@ -212,7 +284,7 @@ async function checkUrl(url) {
 
   // GET is needed to scan page text for “no longer available”. Some websites also reject HEAD.
   if (classified.status === 'Live' || classified.status === 'Unknown' || [403, 405, 429].includes(Number(result.httpStatus))) {
-    result = await requestUrl(url, 'GET', 20000, true);
+    result = await requestUrl(url, 'GET', 10000, true);
     classified = classify(result);
   }
 
@@ -393,31 +465,38 @@ async function runScanJob({ ids = null, reason = 'manual' } = {}) {
     }
     writeDB(db);
 
-    for (const linkInfo of links) {
-      const freshDb = readDB();
-      const link = (freshDb.surveyLinks || []).find(l => l.id === linkInfo.id);
-      if (!link) continue;
+    const concurrency = Math.max(1, Math.min(Number(process.env.SCAN_CONCURRENCY || 2), 5));
+    let nextIndex = 0;
 
-      link.checkStatus = 'Checking';
-      link.checkMessage = `Backstage scan running (${scanState.completed + 1}/${scanState.total})...`;
-      writeDB(freshDb);
+    async function scanWorker(workerNumber) {
+      while (nextIndex < links.length) {
+        const linkInfo = links[nextIndex++];
+        const freshDb = readDB();
+        const link = (freshDb.surveyLinks || []).find(l => l.id === linkInfo.id);
+        if (!link) continue;
 
-      const result = await checkUrl(link.surveyLink);
-      const afterDb = readDB();
-      const afterLink = (afterDb.surveyLinks || []).find(l => l.id === linkInfo.id);
-      if (afterLink) {
-        afterLink.checkStatus = result.status;
-        afterLink.checkMessage = result.message || '';
-        afterLink.httpStatus = result.httpStatus || '';
-        afterLink.finalUrl = result.finalUrl || '';
-        afterLink.checkMethod = result.method || '';
-        afterLink.lastCheckedAt = result.checkedAt;
-        writeDB(afterDb);
+        link.checkStatus = 'Checking';
+        link.checkMessage = `Worker ${workerNumber}: scanning...`;
+        writeDB(freshDb);
+
+        const result = await checkUrl(link.surveyLink);
+        const afterDb = readDB();
+        const afterLink = (afterDb.surveyLinks || []).find(l => l.id === linkInfo.id);
+        if (afterLink) {
+          afterLink.checkStatus = result.status;
+          afterLink.checkMessage = result.message || '';
+          afterLink.httpStatus = result.httpStatus || '';
+          afterLink.finalUrl = result.finalUrl || '';
+          afterLink.checkMethod = result.method || '';
+          afterLink.lastCheckedAt = result.checkedAt;
+          writeDB(afterDb);
+        }
+        scanState.completed += 1;
+        scanState.message = `Scanning ${scanState.completed} of ${scanState.total} links... (${concurrency} parallel)`;
       }
-      scanState.completed += 1;
-      scanState.message = `Scanning ${scanState.completed} of ${scanState.total} links...`;
-      await new Promise(r => setTimeout(r, 500));
     }
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, links.length || 1) }, (_, i) => scanWorker(i + 1)));
 
     scanState.message = `Finished scanning ${scanState.completed} of ${scanState.total} links.`;
   } catch (err) {
@@ -458,5 +537,6 @@ app.post('/api/links/check-selected', (req, res) => {
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
+process.on('SIGTERM', async () => { try { if (sharedBrowser) await sharedBrowser.close(); } catch {} process.exit(0); });
 ensureDataFile();
 app.listen(PORT, () => console.log(`Survey Live Tracker running on port ${PORT}`));
